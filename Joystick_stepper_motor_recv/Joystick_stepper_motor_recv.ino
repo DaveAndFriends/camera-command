@@ -1,12 +1,14 @@
 /******************************************
-  PURPOSE: Running 2 28BYJ-48 Stepper Motor as Pan/Tilt with the Arduino
+  PURPOSE: Control two stepper motors with data recieved from HC12
   Created by: Jan Schaloske
+  Modified by: Davis Johnson
   DATE:   August 2018
 *******************************************/
 #include <SoftwareSerial.h>
 #include <PacketSerial.h>
 #include <Stepper.h>
 
+#define delaytime 3
 #define pin1Pan  4 //these are the Arduino pins that we use to activate coils 1-4 of the Pan stepper motor
 #define pin2Pan  5
 #define pin3Pan  6
@@ -24,40 +26,30 @@ byte hSPan;   // new variable
 const byte homeSwitchTilt = 3;
 byte hSTilt;   // new variable
 
-/**** Joystick Vars ****/
-#define PAD 100
-int x_init;
-int y_init;
-String xpos = "NEUTRAL";
-String ypos = "NEUTRAL";
 
 
 PacketSerial HC12;
-SoftwareSerial hc12ss(10, 11);
-uint8_t packet[] = {0, 0};
-boolean sendPacket = false;
+SoftwareSerial hc12ss(3, 2);   //RX, TX pin 3 black pin 2 yellow
+// p/t,dir,data
+uint8_t packet[] = {0,0,0,0};
 
 // Pan - Tilt Steppers
-#define delaytime 3
+
 int steptemp;
 int numberOfSteps = 400;
 
 const int stepsPerRevolution = 64;  // change this to fit the number of steps per revolution for your motor
 
 // initialize the stepper library for both steppers:
-Stepper tilt_stepper(stepsPerRevolution, pin1Tilt, pin2Tilt, pin3Tilt, pin4Tilt);
-Stepper pan_stepper(stepsPerRevolution, pin1Pan, pin2Pan, pin3Pan, pin4Pan);
+Stepper tilt_stepper(stepsPerRevolution, tiltPins[0], tiltPins[1], tiltPins[2], tiltPins[3]);
+Stepper pan_stepper(stepsPerRevolution, panPins[0], panPins[1], panPins[2], panPins[3]);
 
 void setup() {
-  //initialize serial comms
+  //Initialize serial comms
   hc12ss.begin(9600);
   HC12.setStream(&hc12ss);
   HC12.setPacketHandler(&onPacketReceived);
-
-  //initialize joystick
-  x_init = analogRead(A0);
-  y_init = analogRead(A1);
-
+  
   // initialize the 8 pins as an output:
   pinMode(pin1Pan, OUTPUT);
   pinMode(pin2Pan, OUTPUT);
@@ -69,11 +61,9 @@ void setup() {
   pinMode(pin4Tilt, OUTPUT);
   pinMode(homeSwitchPan, INPUT_PULLUP);
   pinMode(homeSwitchTilt, INPUT_PULLUP);
+  
   Serial.begin(9600);
-  
-  Serial.print("xinit: " + String(x_init));
-  Serial.println(" | yinit: " + String(y_init));
-  
+
   Serial.println("Homing......");
   stepperHome(panPins, homeSwitchPan);
   stepperHome(tiltPins, homeSwitchTilt);
@@ -83,81 +73,55 @@ void setup() {
   // set the speed of the motors
   tilt_stepper.setSpeed(200);    // set first stepper speed
   pan_stepper.setSpeed(200);   // set second stepper speed
+  
 }
 
 void loop() {
-  HC12.update();
-
-  xpos = get_xpos(analogRead(A0)); // read value from joystick X-axis
-  ypos = get_ypos(analogRead(A1)); // read value from joystick Y-axis
-
-  Serial.print("xpos: " + String(xpos));
-  Serial.println(" | ypos: " + String(ypos));
-
-  if (xpos.equals("LEFT")) {
-    forward(tiltPins);  // step left
-    packet[0] = int('l');
-    packet[1] = 0;
-    sendPacket = true;
-  }
-  else if (xpos.equals("RIGHT")) {
-    backward(tiltPins);  // step right
-    packet[0] = int('r');
-    packet[1] = 0;
-    sendPacket = true;
-  }
-  else if (xpos.equals("NEUTRAL")) {
-    step_OFF(tiltPins);  // stop
-    packet[0] = int('s');
-    packet[1] = int('t');
-    sendPacket = true;
-  }
-
-  if (sendPacket) {
-    HC12.send(packet, sizeof(packet));
-    sendPacket = false;
-  }
-
-  if (ypos.equals("UP")) {
-    forward(panPins);  // step forward
-    packet[0] = int('f');
-    packet[1] = 0;
-    sendPacket = true;
-  }
-  else if (ypos.equals("DOWN")) {
-    backward(panPins);  // step backward
-    packet[0] = int('b');
-    packet[1] = int('p');
-    sendPacket = true;
-  }
-  else if (ypos.equals("NEUTRAL")) {
-    step_OFF(panPins);  // //power all Tiltcoils down
-    packet[0] = int('s');
-    packet[1] = 1;
-    sendPacket = true;
-  }
-
-  if (sendPacket) {
-    HC12.send(packet, sizeof(packet));
-  }
-
-  sendPacket = false;
-  delay(50);
-
+ HC12.update();
 }
 
 void onPacketReceived(const uint8_t* buffer, size_t size)
 {
+  //Serial.println("Packet recieved!");
   uint8_t tempBuffer[size];
   memcpy(tempBuffer, buffer, size);
-  //TODO
 
+  //printPacket(tempBuffer);
+  if(tempBuffer[1] == int('f')){ //tilt forward
+    forward(tiltPins);
+  }
+  else if(tempBuffer[1] == int('b')){ //tilt backward
+    backward(tiltPins);
+  }
+  else if(tempBuffer[1] == int('s')){ //stop
+    step_OFF(tiltPins);
+  }
+
+  if(tempBuffer[3] == int('f')){ //tilt forward
+    forward(panPins);
+  }
+  else if(tempBuffer[3] == int('b')){ //tilt backward
+    backward(panPins);
+  }
+  else if(tempBuffer[3] == int('s')){ //stop
+    step_OFF(panPins);
+  }
 }
 
-void OpenDrain(int pins[]) {
+void printPacket(uint8_t packet[]){
+  Serial.print(char(packet[0]));
+  Serial.print(",");
+  Serial.print(char(packet[1]));
+  Serial.print(",");
+  Serial.print(char(packet[2]));
+  Serial.print(",");
+  Serial.print(char(packet[3]));
+  Serial.println();
+}
+
+void OpenDrain(int pins[], int steptemp) {
 
   step_OFF(pins);         //turning all coils off
-  steptemp = numberOfSteps;
   while (steptemp > 0) {
     forward(pins);        //going forward
     steptemp -- ;//counting down the number of steps
@@ -180,7 +144,7 @@ void CloseDrain(int pins[], int steptemp) {
 
 void stepperHome(int pins[], int homeSwitch)
 {
-  hSPan = digitalRead(homeSwitch);
+  int hSPan = digitalRead(homeSwitch);
   int hm = 0;
   while (hSPan == HIGH )
     //while ( hm < 200 )
@@ -201,8 +165,6 @@ void stepperHome(int pins[], int homeSwitch)
   digitalWrite(12, LOW);
   //
 }
-
-
 
 //these functions set the pin settings for each of the four steps per rotation of the motor (keep in mind that the motor in the kit is geared down,
 //i.e. there are many steps necessary per rotation
@@ -264,35 +226,5 @@ void backward(int pins[]) { //one tooth backward
   delay(delaytime);
   Step_A(pins);
   delay(delaytime);
-}
-
-//Get Y position of joystick
-String get_ypos(int reading) {
-  String result = "";
-  if (reading < (y_init + PAD) && reading > (y_init - PAD)) {
-    result = "NEUTRAL";
-  }
-  if (reading < (y_init - PAD)) {
-    result = "DOWN";
-  }
-  else if (reading > (y_init + PAD)) {
-    result = "UP";
-  }
-  return result;
-}
-
-//Get X postition of joystick
-String get_xpos(int reading) {
-  String result = "";
-  if (reading < (x_init + PAD) && reading > (x_init - PAD)) {
-    result = "NEUTRAL";
-  }
-  if (reading < (x_init - PAD)) {
-    result = "LEFT";
-  }
-  else if (reading > (x_init + PAD)) {
-    result = "RIGHT";
-  }
-  return result;
 }
 
